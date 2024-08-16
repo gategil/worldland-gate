@@ -23,6 +23,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"math/rand"
@@ -95,19 +96,35 @@ func (ecc *ECC) Seal(chain consensus.ChainHeaderReader, block *types.Block, resu
 		pend   sync.WaitGroup
 		locals = make(chan *types.Block)
 	)
-	
+
 	for i := 0; i < threads; i++ {
 		pend.Add(1)
 		go func(id int, nonce uint64) {
 			defer pend.Done()
 			//ecc.mine(block, id, nonce, abort, locals)
-			if chain.Config().IsSeoul(block.Header().Number){
+			if chain.Config().IsSeoul(block.Header().Number) {
 				ecc.mine_seoul(block, id, nonce, abort, locals)
-			} else{
+			} else {
 				ecc.mine(block, id, nonce, abort, locals)
 			}
 		}(i, uint64(ecc.rand.Int63()))
 	}
+
+	pend.Add(1)
+	go func() {
+		defer pend.Done()
+		log.Info(fmt.Sprintf("Hashrate: %f", ecc.Hashrate()))
+	loop:
+		for {
+			timer := time.NewTimer(time.Second * 60)
+			select {
+			case <-stop:
+				break loop
+			case <-timer.C:
+				log.Info(fmt.Sprintf("Hashrate: %f", ecc.Hashrate()))
+			}
+		}
+	}()
 
 	// Wait until sealing is terminated or a nonce is found
 	go func() {
@@ -149,8 +166,8 @@ func (ecc *ECC) mine(block *types.Block, id int, seed uint64, abort chan struct{
 	// Start generating random nonces until we abort or find a good one
 	var (
 		total_attempts = int64(0)
-		attempts = int64(0)
-		nonce    = seed
+		attempts       = int64(0)
+		nonce          = seed
 	)
 	logger := log.New("miner", id)
 	logger.Trace("Started ecc search for new nonces", "seed", seed)
@@ -165,9 +182,9 @@ search:
 
 		default:
 			// We don't have to update hash rate on every nonce, so update after after 2^X nonces
-			total_attempts = total_attempts + 64
-			attempts = attempts + 64
-			if (attempts % (1 << 15)) == 0 {
+			total_attempts = total_attempts + 1
+			attempts = attempts + 1
+			if (attempts % (1 << 5)) == 0 {
 				ecc.hashrate.Mark(attempts)
 				attempts = 0
 			}
@@ -187,7 +204,7 @@ search:
 				header = types.CopyHeader(header)
 				header.MixDigest = common.BytesToHash(digest)
 				header.Nonce = types.EncodeNonce(LDPCNonce)
-				
+
 				//convert codeword
 				var codeword []byte
 				var codeVal byte
@@ -228,8 +245,8 @@ func (ecc *ECC) mine_seoul(block *types.Block, id int, seed uint64, abort chan s
 	// Start generating random nonces until we abort or find a good one
 	var (
 		total_attempts = int64(0)
-		attempts = int64(0)
-		nonce    = seed
+		attempts       = int64(0)
+		nonce          = seed
 	)
 	logger := log.New("miner", id)
 	logger.Trace("Started ecc search for new nonces", "seed", seed)
@@ -250,13 +267,13 @@ search:
 
 		default:
 			// We don't have to update hash rate on every nonce, so update after after 2^X nonces
-			total_attempts = total_attempts + 64
-			attempts = attempts + 64
+			total_attempts = total_attempts + 1
+			attempts = attempts + 1
 			if (attempts % (1 << 5)) == 0 {
 				ecc.hashrate.Mark(attempts)
 				attempts = 0
 			}
-		
+
 			digest := make([]byte, 40)
 			copy(digest, hash)
 			binary.LittleEndian.PutUint64(digest[32:], nonce)
@@ -265,7 +282,7 @@ search:
 
 			goRoutineHashVector := generateHv(parameters, digest)
 			goRoutineHashVector, goRoutineOutputWord, _ := OptimizedDecodingSeoul(parameters, goRoutineHashVector, H, rowInCol, colInRow)
-			
+
 			flag, _ := MakeDecision_Seoul(header, colInRow, goRoutineOutputWord)
 			//fmt.Printf("nonce: %v\n", nonce)
 			//fmt.Printf("nonce: %v\n", weight)
@@ -285,7 +302,7 @@ search:
 				header.CodeLength = uint64(parameters.n)
 				header.MixDigest = common.BytesToHash(digest)
 				header.Nonce = types.EncodeNonce(nonce)
-				
+
 				//convert codeword
 				var codeword []byte
 				var codeVal byte
@@ -318,8 +335,7 @@ search:
 	}
 }
 
-
-//GPU MINING... NEED TO UPDTAE
+// GPU MINING... NEED TO UPDTAE
 // This is the timeout for HTTP requests to notify external miners.
 const remoteSealerTimeout = 1 * time.Second
 
@@ -332,7 +348,7 @@ type remoteSealer struct {
 	cancelNotify context.CancelFunc // cancels all notification requests
 	reqWG        sync.WaitGroup     // tracks notification request goroutines
 
-	ecc       *ECC
+	ecc          *ECC
 	noverify     bool
 	notifyURLs   []string
 	results      chan<- *types.Block
@@ -378,7 +394,7 @@ type sealWork struct {
 func startRemoteSealer(ecc *ECC, urls []string, noverify bool) *remoteSealer {
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &remoteSealer{
-		ecc:       ecc,
+		ecc:          ecc,
 		noverify:     noverify,
 		notifyURLs:   urls,
 		notifyCtx:    ctx,
@@ -472,10 +488,11 @@ func (s *remoteSealer) loop() {
 // makeWork creates a work package for external miner.
 //
 // The work package consists of 3 strings:
-//   result[0], 32 bytes hex encoded current block header pow-hash
-//   result[1], 32 bytes hex encoded seed hash used for DAG
-//   result[2], 32 bytes hex encoded boundary condition ("target"), 2^256/difficulty
-//   result[3], hex encoded block number
+//
+//	result[0], 32 bytes hex encoded current block header pow-hash
+//	result[1], 32 bytes hex encoded seed hash used for DAG
+//	result[2], 32 bytes hex encoded boundary condition ("target"), 2^256/difficulty
+//	result[3], hex encoded block number
 func (s *remoteSealer) makeWork(block *types.Block) {
 	hash := s.ecc.SealHash(block.Header())
 	s.currentWork[0] = hash.Hex()
@@ -581,4 +598,3 @@ func (s *remoteSealer) submitWork(nonce types.BlockNonce, mixDigest common.Hash,
 	s.ecc.config.Log.Warn("Work submitted is too old", "number", solution.NumberU64(), "sealhash", sealhash, "hash", solution.Hash())
 	return false
 }
-

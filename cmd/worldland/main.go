@@ -313,7 +313,7 @@ func prepare(ctx *cli.Context) {
   5. Networking is disabled; there is no listen-address, the maximum number of peers is set
      to 0, and discovery is disabled.
 `)
-		
+
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
 		log.Info("Starting clinet on Worldland Seoul mainnet...")
 		ctx.Set(utils.SeoulFlag.Name, strconv.FormatBool(true))
@@ -321,7 +321,7 @@ func prepare(ctx *cli.Context) {
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
 	if ctx.String(utils.SyncModeFlag.Name) != "light" && !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {
 		// Make sure we're not on any supported preconfigured testnet either
-		if  !ctx.IsSet(utils.RopstenFlag.Name) &&
+		if !ctx.IsSet(utils.RopstenFlag.Name) &&
 			!ctx.IsSet(utils.SepoliaFlag.Name) &&
 			!ctx.IsSet(utils.RinkebyFlag.Name) &&
 			!ctx.IsSet(utils.GoerliFlag.Name) &&
@@ -368,7 +368,7 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
-	debug.Memsize.Add("node", stack)
+	// debug.Memsize.Add("node", stack)
 	utils.StartNode(ctx, stack, isConsole)
 
 	// Unlock any account specifically requested
